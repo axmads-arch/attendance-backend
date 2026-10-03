@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id        Int        @id @default(autoincrement())
+  name      String
+  latitude  Float
+  longitude Float
+  radiusM   Int        @default(30)
+  createdAt DateTime   @default(now())
+
+  employees Employee[]
+  managers  Manager[]
+  shifts    Shift[]
+}
+
+model Manager {
+  id           Int      @id @default(autoincrement())
+  name         String
+  phone        String   @unique
+  passwordHash String
+  role         String   @default("manager")
+  companyId    Int
+  company      Company  @relation(fields: [companyId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+model Employee {
+  id            Int             @id @default(autoincrement())
+  fullName      String
+  position      String
+  phone         String          @unique
+  photoUrl      String?
+  hourlyRate    Int             @default(0)
+  monthlySalary Int?
+  active        Boolean         @default(true)
+  companyId     Int
+  company       Company         @relation(fields: [companyId], references: [id])
+  createdAt     DateTime        @default(now())
+
+  shiftAssignments EmployeeShift[]
+  sessions         ShiftSession[]
+  bonuses          BonusPenalty[]
+}
+
+model Shift {
+  id              Int             @id @default(autoincrement())
+  name            String
+  startTime       String
+  endTime         String
+  crossesMidnight Boolean         @default(false)
+  companyId       Int
+  company         Company         @relation(fields: [companyId], references: [id])
+
+  assignments     EmployeeShift[]
+}
+
+model EmployeeShift {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  shiftId    Int
+  shift      Shift    @relation(fields: [shiftId], references: [id])
+  date       DateTime
+
+  @@unique([employeeId, date])
+}
+
+model ShiftSession {
+  id                  Int         @id @default(autoincrement())
+  employeeId          Int
+  employee            Employee    @relation(fields: [employeeId], references: [id])
+  shiftDate           DateTime
+  checkInAt           DateTime?
+  checkInPhoto        String?
+  checkOutAt          DateTime?
+  checkOutPhoto       String?
+  status              String?
+  minutesDiff         Int?
+  lastZone            String      @default("inside")
+  totalOutsideMinutes Int         @default(0)
+
+  zoneEvents          ZoneEvent[]
+}
+
+model ZoneEvent {
+  id        Int          @id @default(autoincrement())
+  sessionId Int
+  session   ShiftSession @relation(fields: [sessionId], references: [id])
+  type      String
+  timestamp DateTime     @default(now())
+  latitude  Float
+  longitude Float
+}
+
+model BonusPenalty {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  type       String
+  amount     Int
+  reason     String?
+  date       DateTime @default(now())
+}
