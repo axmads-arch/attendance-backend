@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boshqaruv paneli</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
+  body { background:#0d0d12; color:#e8e6f0; min-height:100vh; }
+  .wrap { max-width:1000px; margin:0 auto; padding:20px; }
+
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:10px; }
+  .header h1 { font-size:20px; font-weight:800; }
+  .header h1 span { color:#8b7cf6; }
+  .month-nav { display:flex; align-items:center; gap:12px; background:#17171f; padding:8px 16px; border-radius:12px; }
+  .month-nav button { background:#232332; border:none; color:#e8e6f0; width:28px; height:28px; border-radius:8px; cursor:pointer; font-size:14px; }
+
+  .tabs { display:flex; gap:8px; margin-bottom:20px; border-bottom:1px solid #232332; }
+  .tab { padding:10px 16px; cursor:pointer; font-size:13px; font-weight:700; color:#888; border-bottom:2px solid transparent; }
+  .tab.active { color:#8b7cf6; border-color:#8b7cf6; }
+
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
+  .card { background:#17171f; border-radius:16px; padding:16px; }
+  .card-label { font-size:10px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:.6px; margin-bottom:8px; }
+  .card-value { font-size:22px; font-weight:800; }
+  .c-green { color:#4ade80; } .c-yellow { color:#fbbf24; } .c-red { color:#f87171; } .c-purple { color:#a78bfa; }
+
+  table { width:100%; border-collapse:collapse; background:#17171f; border-radius:16px; overflow:hidden; font-size:13px; }
+  th { text-align:left; padding:12px 14px; background:#1e1e28; color:#999; font-weight:700; font-size:11px; text-transform:uppercase; }
+  td { padding:12px 14px; border-top:1px solid #232332; }
+  tr:hover td { background:#1a1a24; }
+
+  .pill { padding:3px 10px; border-radius:8px; font-size:11px; font-weight:700; display:inline-block; }
+  .p-ok { background:rgba(74,222,128,.15); color:#4ade80; }
+  .p-late { background:rgba(248,113,113,.15); color:#f87171; }
+  .p-early { background:rgba(251,191,36,.15); color:#fbbf24; }
+  .p-none { background:rgba(255,255,255,.06); color:#777; }
+
+  .loading { text-align:center; padding:40px; color:#666; }
+  select { background:#232332; color:#e8e6f0; border:none; padding:8px 12px; border-radius:10px; font-size:13px; font-family:inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>Boshqaruv <span>paneli</span></h1>
+    <div class="month-nav">
+      <button onclick="changeMonth(-1)">‹</button>
+      <span id="monthLabel">—</span>
+      <button onclick="changeMonth(1)">›</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="today" onclick="switchTab('today')">Bugungi holat</div>
+    <div class="tab" data-tab="payroll" onclick="switchTab('payroll')">Oylik hisobot</div>
+  </div>
+
+  <div id="todayView"></div>
+  <div id="payrollView" style="display:none"></div>
+</div>
+
+<script>
+// ====== SOZLAMALAR ======
+const API_URL = 'https://YOUR-BACKEND.up.railway.app/api';
+const COMPANY_ID = 1;
+// =========================
+
+let currentDate = new Date();
+let activeTab = 'today';
+
+function fmtSom(n) { return Number(n || 0).toLocaleString('uz-UZ') + " so'm"; }
+
+function updateMonthLabel() {
+  const months = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentabr','Oktabr','Noyabr','Dekabr'];
+  document.getElementById('monthLabel').textContent = `${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+}
+
+function changeMonth(delta) {
+  currentDate.setMonth(currentDate.getMonth() + delta);
+  updateMonthLabel();
+  if (activeTab === 'payroll') loadPayroll();
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('todayView').style.display = tab === 'today' ? 'block' : 'none';
+  document.getElementById('payrollView').style.display = tab === 'payroll' ? 'block' : 'none';
+  if (tab === 'today') loadToday();
+  else loadPayroll();
+}
+
+// ---- BUGUNGI HOLAT ----
+async function loadToday() {
+  const view = document.getElementById('todayView');
+  view.innerHTML = '<div class="loading">Yuklanmoqda...</div>';
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    const res = await fetch(`${API_URL}/attendance/company/${COMPANY_ID}/day/${today}`);
+    const employees = await res.json();
+
+    const present = employees.filter(e => e.attendances.length > 0).length;
+    const late = employees.filter(e => e.attendances.some(a => a.status === 'kech')).length;
+
+    let html = `
+      <div class="cards">
+        <div class="card"><div class="card-label">Keldi</div><div class="card-value c-green">${present}/${employees.length}</div></div>
+        <div class="card"><div class="card-label">Kech qolgan</div><div class="card-value c-red">${late}</div></div>
+      </div>
+      <table>
+        <tr><th>Xodim</th><th>Lavozim</th><th>Kirish</th><th>Chiqish</th><th>Status</th></tr>`;
+
+    for (const e of employees) {
+      const checkIn = e.attendances.find(a => a.type === 'check_in');
+      const checkOut = e.attendances.find(a => a.type === 'check_out');
+      const pillClass = checkIn?.status === 'kech' ? 'p-late' : checkIn?.status === 'erta' ? 'p-early' : checkIn ? 'p-ok' : 'p-none';
+      const pillText = checkIn?.status === 'kech' ? `Kech (${checkIn.minutesDiff} daq)` : checkIn?.status === 'erta' ? 'Erta' : checkIn ? 'Vaqtida' : 'Kelmadi';
+
+      html += `<tr>
+        <td>${e.fullName}</td>
+        <td>${e.position}</td>
+        <td>${checkIn ? new Date(checkIn.timestamp).toLocaleTimeString('uz-UZ',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+        <td>${checkOut ? new Date(checkOut.timestamp).toLocaleTimeString('uz-UZ',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+        <td><span class="pill ${pillClass}">${pillText}</span></td>
+      </tr>`;
+    }
+    html += '</table>';
+    view.innerHTML = html;
+  } catch {
+    view.innerHTML = '<div class="loading">Xatolik yuz berdi</div>';
+  }
+}
+
+// ---- OYLIK HISOBOT ----
+async function loadPayroll() {
+  const view = document.getElementById('payrollView');
+  view.innerHTML = '<div class="loading">Yuklanmoqda...</div>';
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth() + 1;
+
+  try {
+    const res = await fetch(`${API_URL}/payroll/company/${COMPANY_ID}/${year}/${month}`);
+    const rows = await res.json();
+
+    const totalPay = rows.reduce((s, r) => s + r.netSalary, 0);
+
+    let html = `
+      <div class="cards">
+        <div class="card"><div class="card-label">Jami oylik fond</div><div class="card-value c-purple">${fmtSom(totalPay)}</div></div>
+        <div class="card"><div class="card-label">Xodimlar soni</div><div class="card-value">${rows.length}</div></div>
+      </div>
+      <table>
+        <tr><th>Xodim</th><th>Kelgan/Rejalashtirilgan</th><th>Soat</th><th>Smena puli</th><th>Bonus</th><th>Jarima</th><th>Sof maosh</th></tr>`;
+
+    for (const r of rows) {
+      html += `<tr>
+        <td>${r.fullName}</td>
+        <td>${r.daysAttended}/${r.daysAttended + r.daysMissed}</td>
+        <td>${r.totalHours.toFixed(1)}</td>
+        <td>${fmtSom(r.shiftPay)}</td>
+        <td class="c-green">+${fmtSom(r.bonus)}</td>
+        <td class="c-red">−${fmtSom(r.penalty + r.productDeduction)}</td>
+        <td class="c-purple"><b>${fmtSom(r.netSalary)}</b></td>
+      </tr>`;
+    }
+    html += '</table>';
+    view.innerHTML = html;
+  } catch {
+    view.innerHTML = '<div class="loading">Xatolik yuz berdi</div>';
+  }
+}
+
+updateMonthLabel();
+loadToday();
+</script>
+</body>
+</html>
