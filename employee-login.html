@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Kirish</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
+  body { background:#f5f4f1; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:#fff; border-radius:22px; padding:32px 24px; max-width:360px; width:100%; box-shadow:0 4px 20px rgba(0,0,0,.06); text-align:center; }
+  .icon { font-size:40px; margin-bottom:12px; }
+  h1 { font-size:19px; font-weight:800; color:#1a1a1a; margin-bottom:6px; }
+  p { font-size:13px; color:#888; margin-bottom:24px; }
+  input { width:100%; padding:14px; border:1.5px solid #e5e2dc; border-radius:14px; font-size:16px; font-weight:600; text-align:center; background:#faf9f6; margin-bottom:12px; }
+  button { width:100%; padding:14px; background:#1a1a1a; color:#fff; border:none; border-radius:14px; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.5; }
+  .err { color:#c0392b; font-size:13px; margin-top:10px; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">👤</div>
+  <h1>Xodim kirishi</h1>
+  <p>Telefon raqamingizni kiriting</p>
+  <input id="phone" type="tel" placeholder="+998901234567" autofocus>
+  <button id="btn" onclick="login()">Kirish</button>
+  <div id="err" class="err" style="display:none"></div>
+</div>
+
+<script>
+const API_URL = 'https://YOUR-BACKEND.up.railway.app/api';
+
+// Avval kirgan bo'lsa, darhol panelga o'tkazamiz
+const saved = localStorage.getItem('employeeId');
+if (saved) location.href = 'employee-panel.html';
+
+async function login() {
+  const phoneInput = document.getElementById('phone');
+  const btn = document.getElementById('btn');
+  const errBox = document.getElementById('err');
+  const phone = phoneInput.value.trim();
+
+  if (!phone) { showErr('Telefon raqamini kiriting'); return; }
+  btn.disabled = true;
+  errBox.style.display = 'none';
+
+  try {
+    const res = await fetch(`${API_URL}/employees/by-phone/${encodeURIComponent(phone)}`);
+    const data = await res.json();
+    if (!res.ok) { showErr(data.error || 'Topilmadi'); btn.disabled = false; return; }
+
+    localStorage.setItem('employeeId', data.id);
+    localStorage.setItem('employeeName', data.fullName);
+    location.href = 'employee-panel.html';
+  } catch {
+    showErr('Tarmoq xatoligi');
+    btn.disabled = false;
+  }
+}
+function showErr(msg) {
+  const errBox = document.getElementById('err');
+  errBox.textContent = msg;
+  errBox.style.display = 'block';
+}
+document.getElementById('phone').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+</script>
+</body>
+</html>
