@@ -12,9 +12,7 @@ router.post('/register-manager', async (req, res) => {
   if (!name || !phone || !password || !companyId) return res.status(400).json({ error: 'Barcha maydonlar shart' });
   try {
     const passwordHash = await bcrypt.hash(password, 10);
-    const manager = await prisma.manager.create({
-      data: { name, phone, passwordHash, role: role || 'manager', companyId: Number(companyId) },
-    });
+    const manager = await prisma.manager.create({ data: { name, phone, passwordHash, role: role || 'manager', companyId: Number(companyId) } });
     res.json({ id: manager.id, name: manager.name, phone: manager.phone, role: manager.role });
   } catch (err) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'Bu telefon raqam bilan menejer allaqachon mavjud' });
@@ -32,20 +30,14 @@ router.post('/login', async (req, res) => {
     if (!valid) return res.status(401).json({ error: "Telefon yoki parol noto'g'ri" });
     const token = jwt.sign({ managerId: manager.id, companyId: manager.companyId, role: manager.role }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ token, manager: { id: manager.id, name: manager.name, role: manager.role, companyId: manager.companyId } });
-  } catch (err) {
-    res.status(500).json({ error: 'Server xatoligi' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Server xatoligi' }); }
 });
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: 'Token kerak' });
-  try {
-    req.manager = jwt.verify(authHeader.replace('Bearer ', ''), JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ error: "Token yaroqsiz yoki muddati o'tgan" });
-  }
+  try { req.manager = jwt.verify(authHeader.replace('Bearer ', ''), JWT_SECRET); next(); }
+  catch { res.status(401).json({ error: "Token yaroqsiz yoki muddati o'tgan" }); }
 }
 
 module.exports = router;
