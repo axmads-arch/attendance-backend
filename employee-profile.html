@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Davomat</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,'Inter',sans-serif; }
+  body { background:#f5f4f1; min-height:100vh; }
+  .wrap { max-width:460px; margin:0 auto; padding:20px; }
+
+  .header { display:flex; align-items:center; gap:14px; margin-bottom:20px; }
+  .header h1 { font-size:20px; font-weight:800; color:#1a1a1a; }
+
+  .month-nav { background:#fff; border-radius:16px; padding:14px 18px; display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:16px; font-weight:700; font-size:15px; box-shadow:0 2px 10px rgba(0,0,0,.04); }
+  .month-nav button { background:none; border:none; font-size:18px; cursor:pointer; color:#888; }
+
+  .stat-card { background:#fff; border-radius:18px; padding:18px; margin-bottom:12px; box-shadow:0 2px 10px rgba(0,0,0,.04); }
+  .stat-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .stat-label { font-size:15px; font-weight:800; color:#1a1a1a; }
+  .stat-pct { font-size:22px; font-weight:800; }
+  .pct-good { color:#0d8a4f; } .pct-bad { color:#e74c3c; } .pct-mid { color:#e0a800; }
+  .bar-bg { height:6px; background:#f0efec; border-radius:3px; overflow:hidden; margin-bottom:10px; }
+  .bar-fill { height:100%; border-radius:3px; }
+  .stat-sub { font-size:13px; color:#999; }
+  .stat-sub b { color:#1a1a1a; }
+
+  .day-row { background:#fff; border-radius:14px; padding:14px 16px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+  .day-left .day-date { font-size:14px; font-weight:700; color:#1a1a1a; }
+  .day-left .day-name { font-size:12px; color:#999; margin-top:2px; }
+  .day-right { text-align:right; }
+  .day-hours { font-size:14px; font-weight:700; color:#1a1a1a; }
+  .day-delta { font-size:12px; font-weight:700; margin-top:2px; }
+  .delta-late { color:#e74c3c; } .delta-ok { color:#0d8a4f; } .delta-none { color:#bbb; }
+
+  .section-title { font-size:17px; font-weight:800; margin:20px 0 12px; color:#1a1a1a; }
+  .loading { text-align:center; padding:40px; color:#999; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1 id="empName">Davomat</h1>
+  </div>
+
+  <div class="month-nav">
+    <button onclick="changeMonth(-1)">‹</button>
+    <span id="monthLabel">—</span>
+    <button onclick="changeMonth(1)">›</button>
+  </div>
+
+  <div id="statsBox"><div class="loading">Yuklanmoqda...</div></div>
+
+  <div class="section-title">Kunlar bo'yicha</div>
+  <div id="daysBox"></div>
+</div>
+
+<script>
+// ====== SOZLAMALAR ======
+const API_URL = 'https://YOUR-BACKEND.up.railway.app/api';
+// =========================
+
+const params = new URLSearchParams(location.search);
+const EMPLOYEE_ID = params.get('id');
+let currentDate = new Date();
+
+function changeMonth(d) { currentDate.setMonth(currentDate.getMonth() + d); load(); }
+
+function fmtHM(hoursFloat) {
+  const sign = hoursFloat < 0 ? '-' : '';
+  const abs = Math.abs(hoursFloat);
+  const h = Math.floor(abs), m = Math.round((abs - h) * 60);
+  return `${sign}${h} soat ${m} daqiqa`;
+}
+
+async function load() {
+  if (!EMPLOYEE_ID) { document.getElementById('statsBox').innerHTML = '<div class="loading">Xodim ID topilmadi</div>'; return; }
+
+  const months = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentabr','Oktabr','Noyabr','Dekabr'];
+  document.getElementById('monthLabel').textContent = `${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+  const year = currentDate.getFullYear(), month = currentDate.getMonth() + 1;
+
+  try {
+    const [payrollRes, daysRes, empRes] = await Promise.all([
+      fetch(`${API_URL}/payroll/${EMPLOYEE_ID}/${year}/${month}`).then(r => r.json()),
+      fetch(`${API_URL}/attendance/employee/${EMPLOYEE_ID}/${year}/${month}/days`).then(r => r.json()),
+      fetch(`${API_URL}/employees/${EMPLOYEE_ID}`).then(r => r.json()),
+    ]);
+
+    document.getElementById('empName').textContent = empRes.fullName || 'Davomat';
+
+    const totalScheduled = payrollRes.totalScheduledDays || 0;
+    const attendPct = totalScheduled ? Math.round((payrollRes.daysAttended / totalScheduled) * 100) : 0;
+    const totalPlanned = daysRes.reduce((s, d) => s + d.plannedHours, 0) || 1;
+    const hoursPct = Math.round((payrollRes.totalHours / totalPlanned) * 100);
+    const missedPct = totalScheduled ? Math.round((payrollRes.daysMissed / totalScheduled) * 100) : 0;
+    const lateDays = daysRes.filter(d => d.status === 'kech').length;
+    const lateMinutesTotal = daysRes.filter(d => d.status === 'kech' && d.minutesDiff > 0).reduce((s, d) => s + d.minutesDiff, 0);
+
+    const pctClass = p => p >= 80 ? 'pct-good' : p >= 50 ? 'pct-mid' : 'pct-bad';
+    const barColor = p => p >= 80 ? '#0d8a4f' : p >= 50 ? '#e0a800' : '#e74c3c';
+
+    document.getElementById('statsBox').innerHTML = `
+      <div class="stat-card">
+        <div class="stat-top"><span class="stat-label">Davomat</span><span class="stat-pct ${pctClass(attendPct)}">${attendPct}%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${attendPct}%; background:${barColor(attendPct)}"></div></div>
+        <div class="stat-sub"><b>${payrollRes.daysAttended}</b> / ${totalScheduled} kun</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><span class="stat-label">Ish soatlari</span><span class="stat-pct ${pctClass(hoursPct)}">${hoursPct}%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${Math.min(hoursPct,100)}%; background:${barColor(hoursPct)}"></div></div>
+        <div class="stat-sub"><b>${payrollRes.totalHours.toFixed(1)}</b> / ${totalPlanned.toFixed(0)} soat</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><span class="stat-label">Kelmagan kunlar</span><span class="stat-pct pct-bad">${missedPct}%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${missedPct}%; background:#e74c3c"></div></div>
+        <div class="stat-sub"><b>${payrollRes.daysMissed}</b> / ${totalScheduled} kun</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top"><span class="stat-label">Kech kelgan kunlar</span><span class="stat-pct pct-bad">${lateDays} kun</span></div>
+        <div class="stat-sub" style="color:#e0a800; font-weight:700; font-size:14px;">${fmtHM(lateMinutesTotal / 60)}</div>
+      </div>
+    `;
+
+    const dayNames = ['Yakshanba','Dushanba','Seshanba','Chorshanba','Payshanba','Juma','Shanba'];
+    const monthShort = ['Yan','Fev','Mar','Apr','May','Iyun','Iyul','Avg','Sen','Okt','Noy','Dek'];
+
+    document.getElementById('daysBox').innerHTML = daysRes.length === 0
+      ? '<div class="loading">Bu oyda rejalashtirilgan smena yo\'q</div>'
+      : daysRes.map(d => {
+          const date = new Date(d.date);
+          const deltaTxt = !d.attended ? '' :
+            d.deltaMinutes < -5 ? `-${Math.abs(Math.round(d.deltaMinutes))} daqiqa` :
+            d.deltaMinutes > 5 ? `+${Math.round(d.deltaMinutes)} daqiqa` : "O'z vaqtida";
+          const deltaClass = !d.attended ? 'delta-none' : d.deltaMinutes < -5 ? 'delta-late' : 'delta-ok';
+          return `
+            <div class="day-row">
+              <div class="day-left">
+                <div class="day-date">${date.getDate()} ${monthShort[date.getMonth()]}</div>
+                <div class="day-name">${dayNames[date.getDay()]} · ${d.shiftName}</div>
+              </div>
+              <div class="day-right">
+                <div class="day-hours">${d.attended ? d.actualHours.toFixed(1) + ' soat' : 'Kelmadi'}</div>
+                ${d.attended ? `<div class="day-delta ${deltaClass}">${deltaTxt}</div>` : ''}
+              </div>
+            </div>`;
+        }).join('');
+  } catch (err) {
+    console.error(err);
+    document.getElementById('statsBox').innerHTML = '<div class="loading">Xatolik yuz berdi</div>';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
