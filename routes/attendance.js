@@ -15,21 +15,16 @@ function distanceInMeters(lat1, lon1, lat2, lon2) {
 async function findActiveOrUpcomingShift(employeeId, now) {
   const today = new Date(now); today.setHours(0, 0, 0, 0);
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-
   const candidates = await prisma.employeeShift.findMany({
     where: { employeeId, date: { in: [yesterday, today] } },
     include: { shift: true },
   });
-
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
   for (const c of candidates) {
     const [sh, sm] = c.shift.startTime.split(':').map(Number);
     const [eh, em] = c.shift.endTime.split(':').map(Number);
-    const startMin = sh * 60 + sm;
-    const endMin = eh * 60 + em;
+    const startMin = sh * 60 + sm, endMin = eh * 60 + em;
     const isYesterday = c.date.getTime() === yesterday.getTime();
-
     if (c.shift.crossesMidnight) {
       if (isYesterday && nowMinutes < endMin) return c;
       if (!isYesterday && nowMinutes >= startMin) return c;
@@ -50,7 +45,7 @@ function calcStatus(actualTime, scheduledTimeStr, shiftDate) {
 }
 
 router.post('/checkin', async (req, res) => {
-  const { employeeId, photoUrl, latitude, longitude } = req.body;
+  const { employeeId, photoUrl, latitude, longitude, manualShiftId } = req.body;
   if (!employeeId || !photoUrl || latitude == null || longitude == null) {
     return res.status(400).json({ error: "Barcha maydonlar to'ldirilishi shart" });
   }
@@ -67,21 +62,28 @@ router.post('/checkin', async (req, res) => {
     }
 
     const now = new Date();
-    const shiftRecord = await findActiveOrUpcomingShift(employee.id, now);
+    let status = null, minutesDiff = null, shiftDate = now, shiftId = null, isExtra = false;
 
-    let status = null, minutesDiff = null, shiftDate = now;
-    if (shiftRecord) {
-      shiftDate = shiftRecord.date;
-      const result = calcStatus(now, shiftRecord.shift.startTime, shiftDate);
-      status = result.status;
-      minutesDiff = result.minutesDiff;
+    if (manualShiftId) {
+      const shift = await prisma.shift.findUnique({ where: { id: Number(manualShiftId) } });
+      if (!shift) return res.status(400).json({ error: 'Smena topilmadi' });
+      shiftId = shift.id; isExtra = true;
+      const result = calcStatus(now, shift.startTime, now);
+      status = result.status; minutesDiff = result.minutesDiff;
+    } else {
+      const shiftRecord = await findActiveOrUpcomingShift(employee.id, now);
+      if (shiftRecord) {
+        shiftDate = shiftRecord.date; shiftId = shiftRecord.shiftId;
+        const result = calcStatus(now, shiftRecord.shift.startTime, shiftDate);
+        status = result.status; minutesDiff = result.minutesDiff;
+      }
     }
 
     const session = await prisma.shiftSession.create({
-      data: { employeeId: employee.id, shiftDate, checkInAt: now, checkInPhoto: photoUrl, status, minutesDiff, lastZone: 'inside' },
+      data: { employeeId: employee.id, shiftDate, shiftId, isExtra, checkInAt: now, checkInPhoto: photoUrl, status, minutesDiff, lastZone: 'inside' },
     });
 
-    res.json({ success: true, session, status, minutesDiff });
+    res.json({ success: true, session, status, minutesDiff, isExtra });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server xatoligi' });
@@ -102,11 +104,7 @@ router.post('/checkout', async (req, res) => {
       return res.status(403).json({ error: `Siz ishxona hududida emassiz (${Math.round(distance)}m)`, distanceM: Math.round(distance) });
     }
 
-    const updated = await prisma.shiftSession.update({
-      where: { id: session.id },
-      data: { checkOutAt: new Date(), checkOutPhoto: photoUrl },
-    });
-
+    const updated = await prisma.shiftSession.update({ where: { id: session.id }, data: { checkOutAt: new Date(), checkOutPhoto: photoUrl } });
     res.json({ success: true, session: updated });
   } catch (err) {
     console.error(err);
@@ -131,7 +129,6 @@ router.post('/ping', async (req, res) => {
       await prisma.zoneEvent.create({ data: { sessionId: session.id, type: nowInside ? 'enter' : 'exit', latitude, longitude } });
       await prisma.shiftSession.update({ where: { id: session.id }, data: { lastZone: nowInside ? 'inside' : 'outside' } });
     }
-
     res.json({ active: true, inside: nowInside });
   } catch (err) {
     res.status(500).json({ error: 'Server xatoligi' });
@@ -150,23 +147,63 @@ router.get('/status/:employeeId', async (req, res) => {
   }
 });
 
+router.get('/today-sessions/:employeeId', async (req, res) => {
+  try {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const sessions = await prisma.shiftSession.findMany({
+      where: { employeeId: Number(req.params.employeeId), checkInAt: { gte: today, lt: tomorrow } },
+    });
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ error: 'Server xatoligi' });
+  }
+});
+
 router.get('/company/:companyId/day/:date', async (req, res) => {
   try {
     const date = new Date(req.params.date); date.setHours(0, 0, 0, 0);
     const nextDay = new Date(date); nextDay.setDate(nextDay.getDate() + 1);
-
     const employees = await prisma.employee.findMany({
       where: { companyId: Number(req.params.companyId), active: true },
-      include: {
-        sessions: {
-          where: { shiftDate: { gte: date, lt: nextDay } },
-          include: { zoneEvents: true },
-          orderBy: { checkInAt: 'asc' },
-        },
-      },
+      include: { sessions: { where: { shiftDate: { gte: date, lt: nextDay } }, include: { zoneEvents: true }, orderBy: { checkInAt: 'asc' } } },
     });
     res.json(employees);
   } catch (err) {
+    res.status(500).json({ error: 'Server xatoligi' });
+  }
+});
+
+router.get('/employee/:employeeId/:year/:month/days', async (req, res) => {
+  const { employeeId, year, month } = req.params;
+  try {
+    const start = new Date(Number(year), Number(month) - 1, 1);
+    const end = new Date(Number(year), Number(month), 1);
+    const schedule = await prisma.employeeShift.findMany({
+      where: { employeeId: Number(employeeId), date: { gte: start, lt: end } },
+      include: { shift: true }, orderBy: { date: 'asc' },
+    });
+    const sessions = await prisma.shiftSession.findMany({ where: { employeeId: Number(employeeId), shiftDate: { gte: start, lt: end } } });
+    const sessionByDate = new Map(sessions.map(s => [s.shiftDate.toDateString(), s]));
+
+    const days = schedule.map(s => {
+      const session = sessionByDate.get(s.date.toDateString());
+      const [sh, sm] = s.shift.startTime.split(':').map(Number);
+      const [eh, em] = s.shift.endTime.split(':').map(Number);
+      let plannedHours = (eh * 60 + em - (sh * 60 + sm)) / 60;
+      if (plannedHours <= 0) plannedHours += 24;
+
+      let actualHours = 0, deltaMinutes = 0, attended = false;
+      if (session && session.checkInAt && session.checkOutAt) {
+        attended = true;
+        actualHours = (new Date(session.checkOutAt) - new Date(session.checkInAt)) / 3600000;
+        deltaMinutes = Math.round((actualHours - plannedHours) * 60);
+      }
+      return { date: s.date, shiftName: s.shift.name, plannedHours, attended, actualHours, deltaMinutes, status: session?.status || null, minutesDiff: session?.minutesDiff || null };
+    });
+    res.json(days);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server xatoligi' });
   }
 });
