@@ -27,7 +27,7 @@
 
   table { width:100%; border-collapse:collapse; background:#17171f; border-radius:16px; overflow:hidden; font-size:13px; }
   th { text-align:left; padding:12px 14px; background:#1e1e28; color:#999; font-weight:700; font-size:11px; text-transform:uppercase; }
-  td { padding:12px 14px; border-top:1px solid #232332; }
+  td { padding:12px 14px; border-top:1px solid #232332; vertical-align:top; }
   tr:hover td { background:#1a1a24; }
 
   .pill { padding:3px 10px; border-radius:8px; font-size:11px; font-weight:700; display:inline-block; }
@@ -36,18 +36,35 @@
   .p-early { background:rgba(251,191,36,.15); color:#fbbf24; }
   .p-none { background:rgba(255,255,255,.06); color:#777; }
 
+  .zone-list { margin-top:4px; }
+  .zone-item { font-size:11px; color:#f87171; }
+
   .loading { text-align:center; padding:40px; color:#666; }
-  select { background:#232332; color:#e8e6f0; border:none; padding:8px 12px; border-radius:10px; font-size:13px; font-family:inherit; }
+  select, input { background:#232332; color:#e8e6f0; border:none; padding:9px 12px; border-radius:10px; font-size:13px; font-family:inherit; width:100%; }
+
+  .btn { background:#8b7cf6; color:#0d0d12; border:none; padding:10px 18px; border-radius:10px; font-weight:800; font-size:13px; cursor:pointer; }
+
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:50; }
+  .modal-bg.open { display:flex; }
+  .modal { background:#17171f; border-radius:18px; padding:22px; width:90%; max-width:360px; }
+  .modal h3 { margin-bottom:14px; font-size:16px; }
+  .modal label { font-size:11px; color:#999; display:block; margin:10px 0 4px; }
+  .modal-actions { display:flex; gap:10px; margin-top:18px; }
+  .modal-actions button { flex:1; }
+  .btn-cancel { background:#232332; color:#e8e6f0; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="header">
     <h1>Boshqaruv <span>paneli</span></h1>
-    <div class="month-nav">
-      <button onclick="changeMonth(-1)">‹</button>
-      <span id="monthLabel">—</span>
-      <button onclick="changeMonth(1)">›</button>
+    <div style="display:flex; gap:10px; align-items:center">
+      <div class="month-nav">
+        <button onclick="changeMonth(-1)">‹</button>
+        <span id="monthLabel">—</span>
+        <button onclick="changeMonth(1)">›</button>
+      </div>
+      <button class="btn" onclick="openAddEmployee()">+ Xodim</button>
     </div>
   </div>
 
@@ -60,38 +77,54 @@
   <div id="payrollView" style="display:none"></div>
 </div>
 
+<div class="modal-bg" id="addModal">
+  <div class="modal">
+    <h3>Yangi xodim qo'shish</h3>
+    <label>Ism familiya</label>
+    <input id="newName" placeholder="Masalan: Aziz Karimov">
+    <label>Lavozim</label>
+    <input id="newPosition" placeholder="Masalan: Ofitsiant">
+    <label>Telefon</label>
+    <input id="newPhone" placeholder="+998901234567">
+    <label>Soatlik stavka (so'm) — qat'iy oylik bo'lsa bo'sh qoldiring</label>
+    <input id="newHourly" type="number" placeholder="0">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeAddEmployee()">Bekor</button>
+      <button class="btn" onclick="submitAddEmployee()">Qo'shish</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ====== SOZLAMALAR ======
 const API_URL = 'https://YOUR-BACKEND.up.railway.app/api';
-const COMPANY_ID = 1;
+const COMPANY_ID = 1; // seed.js natijasidagi Company ID
 // =========================
 
 let currentDate = new Date();
 let activeTab = 'today';
 
 function fmtSom(n) { return Number(n || 0).toLocaleString('uz-UZ') + " so'm"; }
+function fmtTime(d) { return d ? new Date(d).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }) : '—'; }
 
 function updateMonthLabel() {
   const months = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentabr','Oktabr','Noyabr','Dekabr'];
   document.getElementById('monthLabel').textContent = `${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
 }
-
 function changeMonth(delta) {
   currentDate.setMonth(currentDate.getMonth() + delta);
   updateMonthLabel();
   if (activeTab === 'payroll') loadPayroll();
 }
-
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.getElementById('todayView').style.display = tab === 'today' ? 'block' : 'none';
   document.getElementById('payrollView').style.display = tab === 'payroll' ? 'block' : 'none';
-  if (tab === 'today') loadToday();
-  else loadPayroll();
+  if (tab === 'today') loadToday(); else loadPayroll();
 }
 
-// ---- BUGUNGI HOLAT ----
+// ---- BUGUNGI HOLAT (sessiya asosida, hududdan chiqish-kirish bilan) ----
 async function loadToday() {
   const view = document.getElementById('todayView');
   view.innerHTML = '<div class="loading">Yuklanmoqda...</div>';
@@ -101,8 +134,8 @@ async function loadToday() {
     const res = await fetch(`${API_URL}/attendance/company/${COMPANY_ID}/day/${today}`);
     const employees = await res.json();
 
-    const present = employees.filter(e => e.attendances.length > 0).length;
-    const late = employees.filter(e => e.attendances.some(a => a.status === 'kech')).length;
+    const present = employees.filter(e => e.sessions.length > 0).length;
+    const late = employees.filter(e => e.sessions.some(s => s.status === 'kech')).length;
 
     let html = `
       <div class="cards">
@@ -110,21 +143,44 @@ async function loadToday() {
         <div class="card"><div class="card-label">Kech qolgan</div><div class="card-value c-red">${late}</div></div>
       </div>
       <table>
-        <tr><th>Xodim</th><th>Lavozim</th><th>Kirish</th><th>Chiqish</th><th>Status</th></tr>`;
+        <tr><th>Xodim</th><th>Lavozim</th><th>Kirish</th><th>Chiqish</th><th>Status</th><th>Hududdan chiqishlar</th></tr>`;
 
     for (const e of employees) {
-      const checkIn = e.attendances.find(a => a.type === 'check_in');
-      const checkOut = e.attendances.find(a => a.type === 'check_out');
-      const pillClass = checkIn?.status === 'kech' ? 'p-late' : checkIn?.status === 'erta' ? 'p-early' : checkIn ? 'p-ok' : 'p-none';
-      const pillText = checkIn?.status === 'kech' ? `Kech (${checkIn.minutesDiff} daq)` : checkIn?.status === 'erta' ? 'Erta' : checkIn ? 'Vaqtida' : 'Kelmadi';
+      if (e.sessions.length === 0) {
+        html += `<tr>
+          <td>${e.fullName}</td><td>${e.position}</td><td>—</td><td>—</td>
+          <td><span class="pill p-none">Kelmadi</span></td><td>—</td>
+        </tr>`;
+        continue;
+      }
+      for (const s of e.sessions) {
+        const pillClass = s.status === 'kech' ? 'p-late' : s.status === 'erta' ? 'p-early' : s.checkInAt ? 'p-ok' : 'p-none';
+        const pillText = s.status === 'kech' ? `Kech (${s.minutesDiff} daq)` : s.status === 'erta' ? 'Erta' : s.checkInAt ? 'Vaqtida' : 'Kelmadi';
 
-      html += `<tr>
-        <td>${e.fullName}</td>
-        <td>${e.position}</td>
-        <td>${checkIn ? new Date(checkIn.timestamp).toLocaleTimeString('uz-UZ',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
-        <td>${checkOut ? new Date(checkOut.timestamp).toLocaleTimeString('uz-UZ',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
-        <td><span class="pill ${pillClass}">${pillText}</span></td>
-      </tr>`;
+        const exits = s.zoneEvents.filter(z => z.type === 'exit');
+        let zoneHtml = '—';
+        if (exits.length > 0) {
+          zoneHtml = `<div class="zone-list">`;
+          exits.forEach(ex => {
+            // Shu chiqishdan keyingi birinchi "enter"ni topib, davomiylikni hisoblaymiz
+            const enterAfter = s.zoneEvents.find(z => z.type === 'enter' && new Date(z.timestamp) > new Date(ex.timestamp));
+            const durationTxt = enterAfter
+              ? `${Math.round((new Date(enterAfter.timestamp) - new Date(ex.timestamp)) / 60000)} daq`
+              : 'hali qaytmagan';
+            zoneHtml += `<div class="zone-item">⚠ ${fmtTime(ex.timestamp)} da chiqdi — ${durationTxt}</div>`;
+          });
+          zoneHtml += `</div>`;
+        }
+
+        html += `<tr>
+          <td>${e.fullName}</td>
+          <td>${e.position}</td>
+          <td>${fmtTime(s.checkInAt)}</td>
+          <td>${fmtTime(s.checkOutAt)}</td>
+          <td><span class="pill ${pillClass}">${pillText}</span></td>
+          <td>${zoneHtml}</td>
+        </tr>`;
+      }
     }
     html += '</table>';
     view.innerHTML = html;
@@ -143,7 +199,6 @@ async function loadPayroll() {
   try {
     const res = await fetch(`${API_URL}/payroll/company/${COMPANY_ID}/${year}/${month}`);
     const rows = await res.json();
-
     const totalPay = rows.reduce((s, r) => s + r.netSalary, 0);
 
     let html = `
@@ -169,6 +224,35 @@ async function loadPayroll() {
     view.innerHTML = html;
   } catch {
     view.innerHTML = '<div class="loading">Xatolik yuz berdi</div>';
+  }
+}
+
+// ---- XODIM QO'SHISH ----
+function openAddEmployee() { document.getElementById('addModal').classList.add('open'); }
+function closeAddEmployee() {
+  document.getElementById('addModal').classList.remove('open');
+  ['newName','newPosition','newPhone','newHourly'].forEach(id => document.getElementById(id).value = '');
+}
+async function submitAddEmployee() {
+  const fullName = document.getElementById('newName').value.trim();
+  const position = document.getElementById('newPosition').value.trim();
+  const phone = document.getElementById('newPhone').value.trim();
+  const hourlyRate = document.getElementById('newHourly').value;
+
+  if (!fullName || !position || !phone) { alert('Ism, lavozim va telefon shart'); return; }
+
+  try {
+    const res = await fetch(`${API_URL}/employees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullName, position, phone, hourlyRate, companyId: COMPANY_ID }),
+    });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'Xatolik'); return; }
+    closeAddEmployee();
+    if (activeTab === 'today') loadToday();
+  } catch {
+    alert('Tarmoq xatoligi');
   }
 }
 
